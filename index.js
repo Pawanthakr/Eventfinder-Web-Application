@@ -11,12 +11,15 @@ const Path = require("path");
 const eventModel = require("./models/eventmodel");
 const userModel = require("./models/usermodel");
 const session = require("express-session");
-
+const cookieparser = require('cookie-parser');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.set("view engine", "ejs");
 app.use(express.static(Path.join(__dirname, "public")));
+app.use(cookieparser());
 app.use(session({
     secret: "mysecret",
     resave: false,
@@ -77,19 +80,34 @@ app.get("/logout", (req, res) => {
 
 app.post("/login", async (req, res) => {
     let { email, password } = req.body;
-    let user = await userModel.findOne({ email });
-    console.log("User found:", user);
 
-    if (!user || user.password !== password) {
+    let user = await userModel.findOne({ email: email });
+
+    if (user) {
+
+        const isMatch = await bcrypt.compare(password, user.password);
+
+        if (isMatch) {
+            req.session.user = user;
+            res.redirect("/");
+        } else {
+            return res.send(`
+                <script>
+                   alert("Invalid email or password");
+                   window.history.back();
+               </script>
+            `);
+        }
+
+    } else {
         return res.send(`
-            <script>
-                alert("Invalid email or password");
-                window.history.back();
-            </script>
-        `);
+                <script>
+                   alert("User not found singup first");
+                   window.history.back();
+               </script>
+            `);
+
     }
-    req.session.user = user;
-    res.redirect("/");
 });
 
 app.post("/update/:eventid", async (req, res) => {
@@ -133,6 +151,20 @@ app.post("/create", isLoggedIn, async (req, res) => {
 
 app.post("/signup", async (req, res) => {
     let { fullname, email, password } = req.body;
+    bcrypt.genSalt(10, (err, Salt) => {
+        bcrypt.hash(password, Salt, async (err, hash) => {
+            let user = await userModel.create({
+                fullname,
+                email,
+                password: hash
+            });
+            let token = jwt.sign({ email }, "shhhhhhh");
+            res.cookie("token", token);
+            req.session.user = user;
+            res.redirect("/");
+
+        })
+    })
     if (
         !fullname ||
         !email ||
@@ -146,13 +178,6 @@ app.post("/signup", async (req, res) => {
         return res.send('<script>alert("User already exists. Please login."); window.location.href="/login";</script>');
     }
 
-    let user = await userModel.create({
-        fullname,
-        email,
-        password,
-    });
-    req.session.user = user;
-    res.redirect("/");
 });
 
 const PORT = process.env.PORT || 3000;
